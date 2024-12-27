@@ -1,10 +1,10 @@
-import bcrypt from 'bcrypt'; // bcrypt をローカルでインストールする
+import bcrypt from 'bcryptjs';
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // ユーザー登録
+    // ユーザー登録エンドポイント
     if (url.pathname === "/api/signup" && request.method === "POST") {
       const { email, password } = await request.json();
 
@@ -17,10 +17,10 @@ export default {
         return new Response(JSON.stringify({ success: false, error: "Email already exists" }), { status: 400 });
       }
 
-      // パスワードをハッシュ化
-      const hashedPassword = await bcrypt.hash(password, 10);
+      // パスワードのハッシュ化
+      const hashedPassword = bcrypt.hashSync(password, 10);
 
-      // 新しいユーザーを登録
+      // ユーザー情報をデータベースに挿入
       await env.DB.prepare(
         "INSERT INTO Users (email, password) VALUES (?, ?)"
       ).bind(email, hashedPassword).run();
@@ -28,7 +28,7 @@ export default {
       return new Response(JSON.stringify({ success: true }), { status: 201 });
     }
 
-    // ユーザーログイン
+    // ログインエンドポイント
     if (url.pathname === "/api/login" && request.method === "POST") {
       const { email, password } = await request.json();
 
@@ -37,7 +37,8 @@ export default {
       ).bind(email).all();
 
       if (results.length > 0) {
-        const isPasswordValid = await bcrypt.compare(password, results[0].password);
+        const user = results[0];
+        const isPasswordValid = bcrypt.compareSync(password, user.password);
 
         if (isPasswordValid) {
           return new Response(JSON.stringify({ success: true }), { status: 200 });

@@ -1,51 +1,41 @@
-import { Router } from 'itty-router';
-import bcrypt from 'bcryptjs';
-import jwt from '@tsndr/cloudflare-worker-jwt';
-
-const router = Router();
-const JWT_SECRET = 'your_secret_key'; // 環境変数に格納することを推奨
-
 export default {
   async fetch(request, env) {
-    return router.handle(request, env);
-  }
+    const url = new URL(request.url);
+    const { pathname } = url;
+
+    if (pathname === "/login" && request.method === "POST") {
+      return await handleLogin(request, env);
+    } else if (pathname === "/success") {
+      return new Response(`<h1>成功</h1>`, { headers: { "Content-Type": "text/html" } });
+    } else {
+      return new Response("Not Found", { status: 404 });
+    }
+  },
 };
 
-router.post('/register', async (request, env) => {
+async function handleLogin(request, env) {
   const { email, password } = await request.json();
 
-  if (!email || !password || password.length < 8) {
-    return new Response('Invalid input', { status: 400 });
+  if (!validateEmail(email) || !validatePassword(password)) {
+    return new Response("Invalid email or password format", { status: 400 });
   }
 
-  const passwordHash = await bcrypt.hash(password, 10);
-  try {
-    await env.DB.prepare('INSERT INTO users (email, password_hash) VALUES (?, ?)')
-      .bind(email, passwordHash)
-      .run();
-    return new Response('User registered', { status: 201 });
-  } catch (error) {
-    return new Response('Error creating user', { status: 500 });
+  const query = "SELECT * FROM users WHERE email = ? AND password = ?";
+  const result = await env.USER_DB.prepare(query).bind(email, password).first();
+
+  if (result) {
+    return Response.redirect("/success", 302);
+  } else {
+    return new Response("Invalid credentials", { status: 401 });
   }
-});
+}
 
-router.post('/login', async (request, env) => {
-  const { email, password } = await request.json();
+function validateEmail(email) {
+  const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return regex.test(email);
+}
 
-  try {
-    const user = await env.DB.prepare('SELECT * FROM users WHERE email = ?')
-      .bind(email)
-      .first();
-
-    if (!user || !(await bcrypt.compare(password, user.password_hash))) {
-      return new Response('Invalid credentials', { status: 401 });
-    }
-
-    const token = await jwt.sign({ email }, JWT_SECRET, { expiresIn: '1h' });
-    return new Response(JSON.stringify({ token }), {
-      headers: { 'Content-Type': 'application/json' },
-    });
-  } catch (error) {
-    return new Response('Error logging in', { status: 500 });
-  }
-});
+function validatePassword(password) {
+  const regex = /^[a-zA-Z0-9]{8}$/;
+  return regex.test(password);
+}

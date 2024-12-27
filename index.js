@@ -1,53 +1,51 @@
+import { Router } from 'itty-router';
 import bcrypt from 'bcryptjs';
+import jwt from '@tsndr/cloudflare-worker-jwt';
+
+const router = Router();
+const JWT_SECRET = 'your_secret_key'; // 環境変数に格納することを推奨
 
 export default {
   async fetch(request, env) {
-    const url = new URL(request.url);
-
-    // ユーザー登録エンドポイント
-    if (url.pathname === "/api/signup" && request.method === "POST") {
-      const { email, password } = await request.json();
-
-      // メールアドレスの重複チェック
-      const { results } = await env.DB.prepare(
-        "SELECT * FROM Users WHERE email = ?"
-      ).bind(email).all();
-
-      if (results.length > 0) {
-        return new Response(JSON.stringify({ success: false, error: "Email already exists" }), { status: 400 });
-      }
-
-      // パスワードのハッシュ化
-      const hashedPassword = bcrypt.hashSync(password, 10);
-
-      // ユーザー情報をデータベースに挿入
-      await env.DB.prepare(
-        "INSERT INTO Users (email, password) VALUES (?, ?)"
-      ).bind(email, hashedPassword).run();
-
-      return new Response(JSON.stringify({ success: true }), { status: 201 });
-    }
-
-    // ログインエンドポイント
-    if (url.pathname === "/api/login" && request.method === "POST") {
-      const { email, password } = await request.json();
-
-      const { results } = await env.DB.prepare(
-        "SELECT * FROM Users WHERE email = ?"
-      ).bind(email).all();
-
-      if (results.length > 0) {
-        const user = results[0];
-        const isPasswordValid = bcrypt.compareSync(password, user.password);
-
-        if (isPasswordValid) {
-          return new Response(JSON.stringify({ success: true }), { status: 200 });
-        }
-      }
-
-      return new Response(JSON.stringify({ success: false }), { status: 401 });
-    }
-
-    return new Response("Not Found", { status: 404 });
-  },
+    return router.handle(request, env);
+  }
 };
+
+router.post('/register', async (request, env) => {
+  const { email, password } = await request.json();
+
+  if (!email || !password || password.length < 8) {
+    return new Response('Invalid input', { status: 400 });
+  }
+
+  const passwordHash = await bcrypt.hash(password, 10);
+  try {
+    await env.DB.prepare('INSERT INTO users (email, password_hash) VALUES (?, ?)')
+      .bind(email, passwordHash)
+      .run();
+    return new Response('User registered', { status: 201 });
+  } catch (error) {
+    return new Response('Error creating user', { status: 500 });
+  }
+});
+
+router.post('/login', async (request, env) => {
+  const { email, password } = await request.json();
+
+  try {
+    const user = await env.DB.prepare('SELECT * FROM users WHERE email = ?')
+      .bind(email)
+      .first();
+
+    if (!user || !(await bcrypt.compare(password, user.password_hash))) {
+      return new Response('Invalid credentials', { status: 401 });
+    }
+
+    const token = await jwt.sign({ email }, JWT_SECRET, { expiresIn: '1h' });
+    return new Response(JSON.stringify({ token }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    return new Response('Error logging in', { status: 500 });
+  }
+});
